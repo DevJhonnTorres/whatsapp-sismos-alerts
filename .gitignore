@@ -1,0 +1,7 @@
+# Privado: NO subir contactos reales ni mensajes
+recipients.json
+message.txt
+
+# Entorno / temporales
+*.log
+__pycache__/
