@@ -13,15 +13,29 @@ nombres personales en el repo.
 Uso:
     python send_whatsapp.py <archivo_mensaje.txt>
 """
-import json, sys, urllib.request, websocket, time
+import json, sys, os, urllib.request, websocket, time
 
 CDP_PORT = 9223
-DEFAULT_MSG_FILE = "message.txt"
-RECIPIENTS_FILE = "recipients.json"
+BASE_DIR = os.path.dirname(os.path.abspath(__file__))
+DEFAULT_MSG_FILE = os.path.join(BASE_DIR, "message.txt")
+RECIPIENTS_FILE = os.path.join(BASE_DIR, "recipients.json")
 
 def get_ws():
+    """Selecciona la pestana de WhatsApp Web (no la primera pagina cualquiera)."""
     tabs = json.load(urllib.request.urlopen(f"http://127.0.0.1:{CDP_PORT}/json"))
-    return next(t['webSocketDebuggerUrl'] for t in tabs if t.get('type') == 'page')
+    wa = [t for t in tabs if t.get('type') == 'page' and 'web.whatsapp.com' in t.get('url', '')]
+    if wa:
+        return wa[0]['webSocketDebuggerUrl']
+    # si no hay pestana de whatsapp, abrir una
+    target = {'url': 'https://web.whatsapp.com'}
+    req = urllib.request.Request(f"http://127.0.0.1:{CDP_PORT}/json/new", data=json.dumps(target).encode(),
+                                 headers={'Content-Type': 'application/json'})
+    try:
+        newtab = json.load(urllib.request.urlopen(req, timeout=15))
+        return newtab['webSocketDebuggerUrl']
+    except Exception:
+        # fallback: primera pagina
+        return next(t['webSocketDebuggerUrl'] for t in tabs if t.get('type') == 'page')
 
 class WA:
     def __init__(self):
@@ -83,12 +97,11 @@ class WA:
             return False
 
     def send_msg(self, contact, msg, index=None):
-        if index is not None:
-            if not self.click_result_index(contact, index):
-                return f"ERROR: no se hallo {contact}#{index+1}"
-        else:
-            self.search(contact)
-            self.press_key("Enter", "Enter", 13); time.sleep(2.5)
+        # usar SIEMPRE clic directo en el list-item (mas robusto que Enter)
+        if index is None:
+            index = 0
+        if not self.click_result_index(contact, index):
+            return f"ERROR: no se hallo {contact}#{index+1}"
         has_ed = self.js("""(function(){var p=document.querySelector('footer div[contenteditable="true"]');if(!p)return false;p.focus();return true;})()""")
         if not has_ed:
             return f"ERROR: no editor para {contact}"
@@ -98,7 +111,7 @@ class WA:
         time.sleep(1.2)
         self.press_key("Enter", "Enter", 13); time.sleep(1.5)
         self.press_key("Escape", "Escape", 27); time.sleep(0.8)
-        label = contact if index is None else f"{contact}#{index+1}"
+        label = f"{contact}#{index+1}"
         return "OK " + label
 
 
