@@ -2,6 +2,9 @@
 recipients.json
 message.txt
 
+# Estado local de monitoreo (IDs de sismos ya enviados)
+state.json
+
 # Entorno / temporales
 *.log
 __pycache__/

@@ -1,8 +1,10 @@
 # WhatsApp Sismos Alerts
 
-Automatización que envía **alertas de sismos de Colombia a contactos de WhatsApp** de forma autónoma. Cuando el **Servicio Geológico Colombiano (SGC)** registra un sismo fuerte o sentido, un cron arma el mensaje y lo entrega por WhatsApp Web usando **Chrome DevTools Protocol (CDP)**.
+Automatización que envía **alertas de sismos de Colombia a contactos de WhatsApp** de forma autónoma **sin usar un modelo de lenguaje (LLM)**. Un script de Python puro consulta al **Servicio Geológico Colombiano (SGC)** y, cuando registra un sismo fuerte o sentido, arma el mensaje y lo entrega por WhatsApp Web usando **Chrome DevTools Protocol (CDP)**.
 
 > **Privacidad:** la lista de destinatarios se mantiene en `recipients.json` (NO se sube al repo — ver `recipients.example.json`). Aquí solo se documenta la mecánica.
+>
+> **Costo:** el monitoreo corre como un cron en modo `no_agent` (solo ejecuta el script, sin LLM) → **cero tokens** en el ciclo normal.
 
 ---
 
@@ -10,32 +12,40 @@ Automatización que envía **alertas de sismos de Colombia a contactos de WhatsA
 
 ```mermaid
 flowchart TD
-    C[Cron cada 5 min] -->|consulta API| S[SGC api.sgc.gov.co]
-    S -->|GeoJSON| F{Filtra sismos}
-    F -->|sin sismo fuerte| Q[Sin novedad]
-    F -->|sismo >=4.5M o sentido >=3.5M| M[Arma mensaje texto]
+    C[Cron cada 5 min - no_agent] -->|ejecuta| Mon[monitor_sismos.py - Python puro]
+    Mon -->|consulta API| S[SGC api.sgc.gov.co]
+    S -->|GeoJSON| F{Filtra sismos nuevos}
+    F -->|sin sismo fuerte| Q[stdout vacio - silencio]
+    F -->|sismo >=4.5M o sentido >=3.5M en 6h| M[Arma mensaje texto]
     M --> P[Escribe message.txt]
-    P --> W[Script CDP]
+    P --> W[send_whatsapp.py - CDP]
     W -->|busca contacto + Enter| C2[Chrome WhatsApp Web]
     C2 -->|Input.insertText| E[Editor de mensaje]
     E -->|Enter| D[Envia a contactos]
+    D -->|OK| St[Guarda IDs en state.json]
 ```
 
 **Flujo de envío por contacto:**
 
 ```mermaid
 sequenceDiagram
-    participant C as Cron (Hermes)
+    participant C as Cron (no_agent)
+    participant Mon as monitor_sismos.py
     participant W as send_whatsapp.py
     participant CH as Chrome (CDP :9223)
 
-    C->>W: ejecuta con message.txt
+    C->>Mon: ejecuta cada 5 min (sin LLM)
+    Mon->>Mon: consulta API SGC, filtra sismos nuevos
+    Mon->>Mon: sin novedad → termina (stdout vacío)
+    Mon->>W: hay sismo → escribe message.txt y ejecuta
     W->>CH: Runtime.evaluate → enfocar input de búsqueda
     W->>CH: Input.dispatchKeyEvent (chars del contacto)
     W->>CH: Enter → abre chat (o clic en list-item para duplicados)
     W->>CH: Input.insertText(msg) → pega en contenteditable
     W->>CH: Enter → envía
     CH-->>W: OK contacto
+    W-->>Mon: "OK ..." por cada destino
+    Mon->>Mon: guarda IDs enviados en state.json
 ```
 
 ---
@@ -82,21 +92,24 @@ La app de escritorio de WhatsApp **no se puede automatizar** con pyautogui: su v
 
 ```
 whatsapp-sismos-alerts/
-├── send_whatsapp.py        # Script de envío vía CDP
-├── recipients.example.json # Plantilla de destinatarios (sin datos reales)
-├── requirements.txt        # websocket-client, pyautogui
+├── monitor_sismos.py        # Monitor autónomo (Python puro, sin LLM)
+├── send_whatsapp.py         # Script de envío vía CDP
+├── recipients.example.json  # Plantilla de destinatarios (sin datos reales)
+├── requirements.txt         # websocket-client, pyautogui
 └── README.md
 ```
 
 **En producción (no subido):**
 - `recipients.json` — lista real de contactos (privada)
-- `message.txt` — mensaje generado por el cron de sismos
+- `message.txt` — mensaje generado por el monitor
+- `state.json` — IDs de sismos ya enviados (evita repetir)
 - `.chrome-wa` — perfil de Chrome de WhatsApp (vinculado)
 
 ---
 
 ## 🔒 Notas
 
-- El envío requiere que el **Chrome de WhatsApp Web** esté corriendo. Si se cierra, el script reporta el error hasta reabrirlo.
-- El umbral de alerta (≥4.5 M o sentido ≥3.5 M) lo decide el cron, no este script.
+- El envío requiere que el **Chrome de WhatsApp Web** esté corriendo. Si se cierra, el monitor reporta el error hasta reabrirlo.
+- El monitor corre como cron en modo `no_agent` (sin LLM): con un sismo nuevo imprime el mensaje; sin novedad no imprime nada (silencio).
+- El umbral de alerta (≥4.5 M o sentido ≥3.5 M, ventana 6 h) lo define `monitor_sismos.py`.
 - Datos de sismos: propiedad del SGC, API público.
